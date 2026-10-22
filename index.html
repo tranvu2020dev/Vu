@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>FAST ORB (Health System)</title>
+    <title>FAST ORB - Global Leaderboard</title>
     <style>
         * {
             box-sizing: border-box;
@@ -56,21 +56,145 @@
         }
         #pauseBtn { right: 15px; }
         #soundBtn { right: 67px; font-size: 14px; }
+        #leaderboardBtn { right: 119px; font-size: 14px; }
+
+        .modal-overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(7, 9, 14, 0.85);
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 20;
+            color: #fff;
+        }
+        .modal-content {
+            background: #1f2833;
+            border: 2px solid #66fcf1;
+            padding: 20px;
+            border-radius: 10px;
+            width: 85%;
+            max-width: 320px;
+            text-align: center;
+            box-shadow: 0 0 15px rgba(102, 252, 241, 0.4);
+        }
+        .modal-title {
+            font-size: 20px;
+            color: #66fcf1;
+            margin-bottom: 15px;
+            font-weight: bold;
+        }
+        .leaderboard-list {
+            list-style: none;
+            padding: 0;
+            margin: 10px 0;
+            max-height: 180px;
+            overflow-y: auto;
+            text-align: left;
+            font-size: 14px;
+        }
+        .leaderboard-list li {
+            padding: 6px 8px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            display: flex;
+            justify-content: space-between;
+        }
+        .leaderboard-list li span.rank {
+            color: #f3e600;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+        .close-btn, .submit-btn {
+            margin-top: 15px;
+            padding: 8px 16px;
+            background: #66fcf1;
+            color: #0b0c10;
+            border: none;
+            border-radius: 5px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 8px;
+            margin-top: 10px;
+            border-radius: 4px;
+            border: 1px solid #66fcf1;
+            background: #0b0c10;
+            color: #fff;
+            text-align: center;
+            font-size: 16px;
+        }
     </style>
+
+    <!-- Tích hợp SDK Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 </head>
 <body>
 
 <div id="game-container">
     <canvas id="gameCanvas"></canvas>
+    <button id="leaderboardBtn" class="top-btn">🏆</button>
     <button id="soundBtn" class="top-btn">🔊</button>
     <button id="pauseBtn" class="top-btn">❚❚</button>
 </div>
 
+<!-- Modal Bảng Xếp Hạng Toàn Cầu -->
+<div id="leaderboardModal" class="modal-overlay">
+    <div class="modal-content">
+        <div class="modal-title">🏆 GLOBAL TOP 10</div>
+        <ul id="leaderboardList" class="leaderboard-list">
+            <li>Đang tải dữ liệu online...</li>
+        </ul>
+        <button id="closeLeaderboardBtn" class="close-btn">Đóng</button>
+    </div>
+</div>
+
+<!-- Modal Nhập Tên -->
+<div id="nameInputModal" class="modal-overlay">
+    <div class="modal-content">
+        <div class="modal-title">🎉 KỶ LỤC MỚI!</div>
+        <p style="font-size: 14px; color: #a0a5b0;">Nhập tên để đưa lên Bảng Xếp Hạng Online:</p>
+        <input type="text" id="playerNameInput" maxlength="12" placeholder="Gold Hunter" />
+        <button id="submitScoreBtn" class="submit-btn">LƯU ĐIỂM ONLINE</button>
+    </div>
+</div>
+
 <script>
+// --- CẤU HÌNH FIREBASE REALTIME DATABASE ---
+const firebaseConfig = {
+  apiKey: "AIzaSyDOBRKvzIpxRqgjBnTaitaNoyMneTKL1vI",
+  authDomain: "fast-orb-game.firebaseapp.com",
+  databaseURL: "https://fast-orb-game-default-rtdb.firebaseio.com",
+  projectId: "fast-orb-game",
+  storageBucket: "fast-orb-game.firebasestorage.app",
+  messagingSenderId: "511846230655",
+  appId: "1:511846230655:web:2641dd09edca1872a52d4a",
+  measurementId: "G-18MZJKRT70"
+};
+
+// Khởi tạo Firebase
+let db = null;
+try {
+    firebase.initializeApp(firebaseConfig);
+    db = firebase.database();
+} catch(e) {
+    console.log("Lỗi khởi tạo Firebase");
+}
+
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const pauseBtn = document.getElementById('pauseBtn');
 const soundBtn = document.getElementById('soundBtn');
+const leaderboardBtn = document.getElementById('leaderboardBtn');
+const leaderboardModal = document.getElementById('leaderboardModal');
+const closeLeaderboardBtn = document.getElementById('closeLeaderboardBtn');
+const nameInputModal = document.getElementById('nameInputModal');
+const playerNameInput = document.getElementById('playerNameInput');
+const submitScoreBtn = document.getElementById('submitScoreBtn');
+const leaderboardList = document.getElementById('leaderboardList');
 
 function resizeCanvas() {
     let w = window.innerWidth;
@@ -132,6 +256,42 @@ let doubleScoreTimer = 0;
 let shakeDuration = 0;
 let shakeMagnitude = 0;
 
+// Đọc dữ liệu Leaderboard từ Firebase theo thời gian thực (Realtime)
+function listenGlobalLeaderboard() {
+    if (!db) {
+        leaderboardList.innerHTML = '<li>Lỗi kết nối database</li>';
+        return;
+    }
+    db.ref('leaderboard').orderByChild('score').limitToLast(10).on('value', (snapshot) => {
+        let scores = [];
+        snapshot.forEach((child) => {
+            scores.push(child.val());
+        });
+        scores.reverse(); // Sắp xếp từ cao xuống thấp
+        
+        leaderboardList.innerHTML = '';
+        if (scores.length === 0) {
+            leaderboardList.innerHTML = '<li>Chưa có kỷ lục nào</li>';
+            return;
+        }
+        scores.forEach((entry, index) => {
+            let li = document.createElement('li');
+            li.innerHTML = `<span><span class="rank">#${index + 1}</span> ${entry.name}</span><span>${entry.score} pts</span>`;
+            leaderboardList.appendChild(li);
+        });
+    });
+}
+
+// Gửi điểm lên Firebase Cloud
+function pushScoreToFirebase(name, score) {
+    if (!db) return;
+    db.ref('leaderboard').push({
+        name: name,
+        score: score,
+        timestamp: Date.now()
+    });
+}
+
 try {
     highScore = parseInt(localStorage.getItem('fast_orb_high_v1') || '0', 10);
 } catch(e) {
@@ -148,7 +308,6 @@ let obstacles = [];
 let spawnTimer = 0;
 let spawnInterval = 100;
 
-// Hiệu ứng ngân hà (Starfield)
 let stars = [];
 const numStars = 120;
 
@@ -174,6 +333,7 @@ window.addEventListener('resize', () => {
 });
 resizeCanvas();
 initStars();
+listenGlobalLeaderboard();
 
 function initGame() {
     score = 0;
@@ -229,15 +389,19 @@ function updateTopBtnsVisibility() {
     if (gameState === 'PLAYING' || gameState === 'PAUSED') {
         pauseBtn.style.display = 'flex';
         soundBtn.style.display = 'flex';
+        leaderboardBtn.style.display = 'none';
     } else {
         pauseBtn.style.display = 'none';
         soundBtn.style.display = 'none';
+        leaderboardBtn.style.display = 'flex';
     }
 }
 
 function triggerAction(e) {
     if (e) e.preventDefault();
     initAudio();
+
+    if (leaderboardModal.style.display === 'flex' || nameInputModal.style.display === 'flex') return;
 
     if (gameState === 'START' || gameState === 'GAMEOVER') {
         initGame();
@@ -262,6 +426,22 @@ soundBtn.addEventListener('pointerdown', (e) => {
     e.stopPropagation();
     initAudio();
     toggleSound();
+});
+
+leaderboardBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    leaderboardModal.style.display = 'flex';
+});
+
+closeLeaderboardBtn.addEventListener('click', () => {
+    leaderboardModal.style.display = 'none';
+});
+
+submitScoreBtn.addEventListener('click', () => {
+    let pName = playerNameInput.value.trim() || 'Gold Hunter';
+    pushScoreToFirebase(pName, score);
+    nameInputModal.style.display = 'none';
+    leaderboardModal.style.display = 'flex';
 });
 
 window.addEventListener('keydown', (e) => {
@@ -349,9 +529,7 @@ function updateGame() {
 
     if (gameState === 'PAUSED') return;
 
-    if (shakeDuration > 0) {
-        shakeDuration--;
-    }
+    if (shakeDuration > 0) shakeDuration--;
 
     if (doubleScoreActive) {
         doubleScoreTimer--;
@@ -474,6 +652,9 @@ function updateGame() {
                         if (score > highScore) {
                             highScore = score;
                             try { localStorage.setItem('fast_orb_high_v1', highScore); } catch(e) {}
+                            setTimeout(() => {
+                                nameInputModal.style.display = 'flex';
+                            }, 500);
                         }
                     }
                     continue;
